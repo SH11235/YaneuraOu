@@ -960,124 +960,70 @@ class FeatureTransformer {
 		accumulator.computed_score = false;
 	}
 
-	// 単一視点のキャッシュ経由 refresh
-	// アクティブ特徴量を取得・ソートし、キャッシュとのマージベース差分を適用する。
+	// 単一視点のキャッシュ経由 refresh (Stockfish 風 piece_list 差分方式)
+	// PieceList を直接 slot-wise 比較し、変化した slot のみ add/sub する。
+	// sort・append_active_indices のオーバーヘッドを完全に排除。
 	void refresh_perspective_with_cache(
 		const Position& pos, Color perspective, IndexType trigger_idx,
 		BiasType* accumulation_out, AccumulatorCaches& cache) const
 	{
-		// アクティブ特徴量を取得
-		Features::IndexList active_list[2];
-		RawFeatures::AppendActiveIndices(pos, kRefreshTriggers[trigger_idx], active_list);
-
 		// trigger_idx == 0 のみキャッシュ対象（SFNNwoPSQT では常に 0）
 		if (trigger_idx != 0) {
+			Features::IndexList active_list[2];
+			RawFeatures::AppendActiveIndices(pos, kRefreshTriggers[trigger_idx], active_list);
 			std::memset(accumulation_out, 0, kHalfDimensions * sizeof(BiasType));
 			for (const auto index : active_list[perspective]) {
-				const IndexType offset = kHalfDimensions * index;
-				for (IndexType j = 0; j < kHalfDimensions; ++j) {
-					accumulation_out[j] += weights_[offset + j];
-				}
+				add_weight(accumulation_out, index);
 			}
 			return;
 		}
 
-		// ソート済みアクティブインデックスを作成
-		std::uint32_t sorted_active[kMaxActiveFeatures];
-		int num_active = 0;
-		for (const auto index : active_list[perspective]) {
-			if (num_active < kMaxActiveFeatures)
-				sorted_active[num_active++] = static_cast<std::uint32_t>(index);
-		}
-		std::sort(sorted_active, sorted_active + num_active);
+		// 現在の PieceList を取得
+		const BonaPiece* current_pl = (perspective == BLACK) ?
+			pos.eval_list()->piece_list_fb() :
+			pos.eval_list()->piece_list_fw();
 
 		// 玉位置を取得（キャッシュのキーとして使用）
-		// HalfKA_hm2 では perspective の玉を使う
-		BonaPiece* pieces;
-		Square sq_target_k;
-		{
-			auto* pl = (perspective == BLACK) ?
-				pos.eval_list()->piece_list_fb() :
-				pos.eval_list()->piece_list_fw();
-			const PieceNumber target =
-				static_cast<PieceNumber>(PIECE_NUMBER_KING + perspective);
-			sq_target_k = static_cast<Square>((pl[target] - f_king) % SQ_NB);
-			(void)pieces;
-		}
+		const PieceNumber king_pn =
+			static_cast<PieceNumber>(PIECE_NUMBER_KING + perspective);
+		const Square sq_target_k =
+			static_cast<Square>((current_pl[king_pn] - f_king) % SQ_NB);
 
 		auto& entry = cache.entries[sq_target_k][perspective];
 
 		if (entry.valid) {
-			// キャッシュヒット → マージベース差分
+			// キャッシュヒット → 40 slot 比較して変化分のみ差分適用
 			std::memcpy(accumulation_out, entry.accumulation, kHalfDimensions * sizeof(BiasType));
-			apply_cache_diff(accumulation_out,
-				entry.active_indices, entry.num_active,
-				sorted_active, num_active);
+
+			for (int i = 0; i < kPieceListSize; ++i) {
+				const BonaPiece cached_bp = entry.piece_list[i];
+				const BonaPiece current_bp = current_pl[i];
+				if (cached_bp != current_bp) {
+					if (cached_bp != BONA_PIECE_ZERO) {
+						const auto idx = Features::HalfKA_hm2<Features::Side::kFriend>::MakeIndex(sq_target_k, cached_bp);
+						sub_weight(accumulation_out, idx);
+					}
+					if (current_bp != BONA_PIECE_ZERO) {
+						const auto idx = Features::HalfKA_hm2<Features::Side::kFriend>::MakeIndex(sq_target_k, current_bp);
+						add_weight(accumulation_out, idx);
+					}
+				}
+			}
 		} else {
 			// キャッシュミス → バイアスから full refresh
 			std::memcpy(accumulation_out, biases_, kHalfDimensions * sizeof(BiasType));
-			for (int k = 0; k < num_active; ++k) {
-				const IndexType offset = kHalfDimensions * sorted_active[k];
-#if defined(VECTOR)
-				auto acc  = reinterpret_cast<vec_t*>(accumulation_out);
-				auto col  = reinterpret_cast<const vec_t*>(&weights_[offset]);
-#if defined(USE_AVX512)
-				constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
-#else
-				constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth / 2);
-#endif
-				for (IndexType j = 0; j < kNumChunks; ++j) {
-					acc[j] = vec_add_16(acc[j], col[j]);
+			for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_NB; ++i) {
+				if (current_pl[i] != BONA_PIECE_ZERO) {
+					const auto idx = Features::HalfKA_hm2<Features::Side::kFriend>::MakeIndex(sq_target_k, current_pl[i]);
+					add_weight(accumulation_out, idx);
 				}
-#else
-				for (IndexType j = 0; j < kHalfDimensions; ++j) {
-					accumulation_out[j] += weights_[offset + j];
-				}
-#endif
 			}
 		}
 
 		// キャッシュを更新
 		std::memcpy(entry.accumulation, accumulation_out, kHalfDimensions * sizeof(BiasType));
-		int n = std::min(num_active, (int)kMaxActiveFeatures);
-		std::memcpy(entry.active_indices, sorted_active, n * sizeof(std::uint32_t));
-		entry.num_active = static_cast<std::uint16_t>(n);
+		std::memcpy(entry.piece_list, current_pl, kPieceListSize * sizeof(BonaPiece));
 		entry.valid = true;
-	}
-
-	// ソート済み配列のマージベース差分を適用（O(n+m)）
-	void apply_cache_diff(
-		BiasType* accumulation,
-		const std::uint32_t* cached, int cached_len,
-		const std::uint32_t* current, int current_len) const
-	{
-		int ci = 0, ni = 0;
-
-		while (ci < cached_len && ni < current_len) {
-			std::uint32_t c = cached[ci];
-			std::uint32_t n = current[ni];
-			if (c < n) {
-				// cached にあって current にない → 重み減算
-				sub_weight(accumulation, c);
-				ci++;
-			} else if (c > n) {
-				// current にあって cached にない → 重み加算
-				add_weight(accumulation, n);
-				ni++;
-			} else {
-				// 両方にある → 変化なし
-				ci++;
-				ni++;
-			}
-		}
-
-		while (ci < cached_len) {
-			sub_weight(accumulation, cached[ci++]);
-		}
-
-		while (ni < current_len) {
-			add_weight(accumulation, current[ni++]);
-		}
 	}
 
 	// 1特徴量の重み加算

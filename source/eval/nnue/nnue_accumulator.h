@@ -29,18 +29,16 @@ struct alignas(64) Accumulator {
 //     AccumulatorCaches (Finny Tables)
 // ============================================================
 
-// 1視点のアクティブ特徴量の最大数。
-// HalfKA_hm2は PIECE_NUMBER_NB(=40) 個の特徴量を生成する。
-static constexpr int kMaxActiveFeatures = 40;
+// PieceList のスロット数 (= PIECE_NUMBER_NB = 40)
+static constexpr int kPieceListSize = 40;
 
-// 1エントリ = ある玉位置・ある視点でのキャッシュ
+// 1エントリ = ある玉位置・ある視点でのキャッシュ (Stockfish 風 piece_list 差分方式)
 struct alignas(64) AccCacheEntry {
   // キャッシュされたアキュムレータ値 (refresh trigger index 0 のみ)
   std::int16_t accumulation[kTransformedFeatureDimensions];
-  // キャッシュ時点のアクティブ特徴インデックス（ソート済み）
-  std::uint32_t active_indices[kMaxActiveFeatures];
-  // active_indices の有効数
-  std::uint16_t num_active;
+  // キャッシュ時点の PieceList (perspective 固有の fb または fw 配列)
+  // BONA_PIECE_ZERO はスロット未使用を表す
+  BonaPiece piece_list[kPieceListSize];
   // 有効フラグ
   bool valid;
 };
