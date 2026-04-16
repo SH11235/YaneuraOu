@@ -549,7 +549,11 @@ class FeatureTransformer {
 
 		// USE_ELEMENT_WISE_MULTIPLY は SFNNwoPSQT で常に定義される
 #if defined(VECTOR)
+#if defined(USE_AVX512)
+		constexpr IndexType OutputChunkSize = 64;
+#else
 		constexpr IndexType OutputChunkSize = kSimdWidth;
+#endif
 		static_assert((kHalfDimensions / 2) % OutputChunkSize == 0);
 		constexpr IndexType NumOutputChunks = kHalfDimensions / 2 / OutputChunkSize;
 
@@ -830,11 +834,7 @@ class FeatureTransformer {
 					kHalfDimensions * sizeof(BiasType));
 
 #if defined(VECTOR)
-#if defined(USE_AVX512)
-				constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
-#else
-				constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth / 2);
-#endif
+				constexpr IndexType kNumChunks = kHalfDimensions / (sizeof(vec_t) / sizeof(BiasType));
 				auto acc = reinterpret_cast<vec_t*>(&accumulator.accumulation[perspective][i][0]);
 #endif
 
@@ -893,11 +893,7 @@ class FeatureTransformer {
 			RawFeatures::AppendChangedIndices(pos, kRefreshTriggers[i], removed_indices, added_indices, reset);
 			for (Color perspective : {BLACK, WHITE}) {
 #if defined(VECTOR)
-#if defined(USE_AVX512)
-				constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
-#else
-				constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth / 2);
-#endif
+				constexpr IndexType kNumChunks = kHalfDimensions / (sizeof(vec_t) / sizeof(BiasType));
 				auto accumulation              = reinterpret_cast<vec_t*>(&accumulator.accumulation[perspective][i][0]);
 #endif
 				if (reset[perspective]) {
@@ -1032,11 +1028,7 @@ class FeatureTransformer {
 #if defined(VECTOR)
 		auto acc = reinterpret_cast<vec_t*>(accumulation);
 		auto col = reinterpret_cast<const vec_t*>(&weights_[offset]);
-#if defined(USE_AVX512)
-		constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
-#else
-		constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth / 2);
-#endif
+		constexpr IndexType kNumChunks = kHalfDimensions / (sizeof(vec_t) / sizeof(BiasType));
 		for (IndexType j = 0; j < kNumChunks; ++j) {
 			acc[j] = vec_add_16(acc[j], col[j]);
 		}
@@ -1053,11 +1045,7 @@ class FeatureTransformer {
 #if defined(VECTOR)
 		auto acc = reinterpret_cast<vec_t*>(accumulation);
 		auto col = reinterpret_cast<const vec_t*>(&weights_[offset]);
-#if defined(USE_AVX512)
-		constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
-#else
-		constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth / 2);
-#endif
+		constexpr IndexType kNumChunks = kHalfDimensions / (sizeof(vec_t) / sizeof(BiasType));
 		for (IndexType j = 0; j < kNumChunks; ++j) {
 			acc[j] = vec_sub_16(acc[j], col[j]);
 		}
