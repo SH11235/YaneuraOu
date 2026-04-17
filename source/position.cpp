@@ -1663,9 +1663,6 @@ void Position::do_move_impl(Move m, StateInfo& newSt, bool givesCheck, const T* 
     st->accumulator.computed_accumulation = false;
     st->accumulator.computed_score        = false;
 #endif
-#if defined(SFNNwoPSQT)
-    st->computed_progress = false;
-#endif
 
 #if defined(USE_BOARD_EFFECT_PREV)
     // NNUE-HalfKPE9
@@ -2368,10 +2365,6 @@ void Position::do_null_move(StateInfo& newSt, const T& tt) {
 
 	newSt.previous = st;
     st             = &newSt;
-
-#if defined(SFNNwoPSQT)
-    st->computed_progress = false;
-#endif
 
 #if STOCKFISH
 	if (st->epSquare != SQ_NONE)
