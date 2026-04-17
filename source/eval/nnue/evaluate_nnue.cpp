@@ -85,10 +85,65 @@ float compute_progress8kpabs_sum(const YaneuraOu::Position& pos) {
     return sum;
 }
 
-// progress8kpabs バケット計算
+// progress_sum を DirtyPiece の変化分で差分更新
+// 玉が動いていない場合にのみ使用可能
+float update_progress8kpabs_sum_diff(
+    float prev_sum,
+    const YaneuraOu::Eval::DirtyPiece& dp,
+    int sq_bk, int sq_wk)
+{
+    using namespace YaneuraOu::Eval;
+
+    float sum = prev_sum;
+    for (int i = 0; i < dp.dirty_num; ++i) {
+        // old の寄与を引く
+        const auto old_fb = static_cast<BonaPiece>(dp.changed_piece[i].old_piece.fb);
+        if (old_fb != BONA_PIECE_ZERO && old_fb < fe_old_end)
+            sum -= progress_kpabs_weights[sq_bk * fe_old_end + old_fb];
+        const auto old_fw = static_cast<BonaPiece>(dp.changed_piece[i].old_piece.fw);
+        if (old_fw != BONA_PIECE_ZERO && old_fw < fe_old_end)
+            sum -= progress_kpabs_weights[sq_wk * fe_old_end + old_fw];
+
+        // new の寄与を足す
+        const auto new_fb = static_cast<BonaPiece>(dp.changed_piece[i].new_piece.fb);
+        if (new_fb != BONA_PIECE_ZERO && new_fb < fe_old_end)
+            sum += progress_kpabs_weights[sq_bk * fe_old_end + new_fb];
+        const auto new_fw = static_cast<BonaPiece>(dp.changed_piece[i].new_piece.fw);
+        if (new_fw != BONA_PIECE_ZERO && new_fw < fe_old_end)
+            sum += progress_kpabs_weights[sq_wk * fe_old_end + new_fw];
+    }
+    return sum;
+}
+
+// progress8kpabs バケット計算（差分更新対応、StateInfo ベース）
+// StateInfo::progress_sum / computed_progress を使い、探索木のバックトラックに正しく対応。
 int compute_progress8kpabs_bucket(const YaneuraOu::Position& pos) {
-    float sum = compute_progress8kpabs_sum(pos);
-    return progress_sum_to_bucket(sum);
+    using namespace YaneuraOu;
+
+    auto* st = pos.state();
+
+    if (!st->computed_progress) {
+        // 前局面が計算済みかつ玉未移動なら差分更新
+        const auto* prev = st->previous;
+        if (prev && prev->computed_progress) {
+            const auto& dp = st->dirtyPiece;
+            if (dp.pieceNo[0] != PIECE_NUMBER_KING + BLACK &&
+                dp.pieceNo[0] != PIECE_NUMBER_KING + WHITE) {
+                const int sq_bk = pos.square<KING>(BLACK);
+                const int sq_wk = Inv(pos.square<KING>(WHITE));
+                st->progress_sum = update_progress8kpabs_sum_diff(
+                    prev->progress_sum, dp, sq_bk, sq_wk);
+                st->computed_progress = true;
+                return progress_sum_to_bucket(st->progress_sum);
+            }
+        }
+
+        // フォールバック: 全駒スキャン
+        st->progress_sum = compute_progress8kpabs_sum(pos);
+        st->computed_progress = true;
+    }
+
+    return progress_sum_to_bucket(st->progress_sum);
 }
 
 // progress.bin を読み込む (f64[81][fe_old_end] -> f32)

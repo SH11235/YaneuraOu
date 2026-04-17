@@ -199,6 +199,14 @@ struct StateInfo {
 	Eval::NNUE::Accumulator accumulator;
 #endif
 
+#if defined(SFNNwoPSQT)
+	// progress8kpabs の重み付き和（差分更新用）
+	// コピー範囲外。do_move のたびに computed_progress は未初期化になるので、
+	// compute_progress8kpabs_bucket 側で previous->computed_progress を見て判定する。
+	float progress_sum = 0.0f;
+	bool computed_progress = false;
+#endif
+
 #if defined (USE_EVAL_LIST)
 	// 評価値の差分計算の管理用
 	Eval::DirtyPiece dirtyPiece;
