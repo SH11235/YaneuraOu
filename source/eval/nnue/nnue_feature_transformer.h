@@ -296,11 +296,7 @@ class FeatureTransformer {
 
 #if defined(VECTOR)
 			// Packed output is sizeof(vec_t) bytes for each SIMD register
-#if defined(USE_AVX512)
-			constexpr IndexType OutputChunkSize = 64;
-#else
 			constexpr IndexType OutputChunkSize = kSimdWidth;
-#endif
 		static_assert((kHalfDimensions / 2) % OutputChunkSize == 0);
 		constexpr IndexType NumOutputChunks = kHalfDimensions / 2 / OutputChunkSize;
 
@@ -411,8 +407,8 @@ class FeatureTransformer {
 		// kNumChunksの意味自体がアーキテクチャごとに違うため、共通化しにくい。触らないことにする。
 
 #if defined(USE_AVX512)
-		constexpr IndexType kNumChunks = kHalfDimensions / (kSimdWidth * 2);
-		static_assert(kHalfDimensions % (kSimdWidth * 2) == 0);
+		constexpr IndexType kNumChunks = kHalfDimensions / kSimdWidth;
+		static_assert(kHalfDimensions % kSimdWidth == 0);
 		const __m512i kControl = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
 		const __m512i kZero    = _mm512_setzero_si512();
 
@@ -549,11 +545,7 @@ class FeatureTransformer {
 
 		// USE_ELEMENT_WISE_MULTIPLY は SFNNwoPSQT で常に定義される
 #if defined(VECTOR)
-#if defined(USE_AVX512)
-		constexpr IndexType OutputChunkSize = 64;
-#else
 		constexpr IndexType OutputChunkSize = kSimdWidth;
-#endif
 		static_assert((kHalfDimensions / 2) % OutputChunkSize == 0);
 		constexpr IndexType NumOutputChunks = kHalfDimensions / 2 / OutputChunkSize;
 
